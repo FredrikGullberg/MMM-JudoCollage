@@ -14,28 +14,44 @@ Module.register("MMM-JudoCollage", {
   photos: [],
   selected: [],
   recent: [],
+  decodedImages: [],
+  prepared: null,
+  preparing: false,
   initialized: false,
   suspended: false,
+
   start() {
     this.sendSocketNotification("JUDO_GET_PHOTOS", { imageFolder: this.config.imageFolder });
   },
+
   getStyles() { return [this.file("MMM-JudoCollage.css")]; },
+
   socketNotificationReceived(name, payload) {
     if (name !== "JUDO_PHOTOS") return;
     this.initialized = true;
     this.photos = Array.isArray(payload.photos) ? payload.photos : [];
     if (payload.error) Log.warn("MMM-JudoCollage: " + payload.error);
-    this.pickPhotos();
+    this.prepareNextPhotos();
   },
-  suspend() { this.suspended = true; },
+
+  // MMM-pages calls suspend() only once the outgoing page is hidden.
+  // Prepare and render the next collage here, not when the page appears.
+  suspend() {
+    this.suspended = true;
+    if (!this.config.shuffleOnResume || !this.initialized) return;
+    if (this.prepared) this.applyPrepared();
+    else this.prepareNextPhotos();
+  },
+
   resume() {
+    // Never change the images on the visible page. If decoding was slow,
+    // the previous collage remains on screen until the next hide.
     this.suspended = false;
-    if (this.initialized && this.config.shuffleOnResume) this.pickPhotos();
   },
-  pickPhotos() {
+
+  choosePhotos() {
     const all = this.photos;
     const count = Math.min(3, all.length, Math.max(1, Math.trunc(Number(this.config.imageCount) || 3)));
-    const recentLimit = Math.max(0, Math.trunc(Number(this.config.avoidRecentImages) || 0));
     const current = new Set(this.selected);
     const fresh = all.filter(x => !current.has(x) && !this.recent.includes(x));
     const older = all.filter(x => !current.has(x) && this.recent.includes(x));
@@ -48,11 +64,56 @@ Module.register("MMM-JudoCollage", {
       }
       return copy;
     };
-    const next = [...shuffle(fresh), ...shuffle(older), ...shuffle(repeats)].slice(0, count);
-    this.recent = recentLimit ? [...this.recent, ...this.selected].slice(-recentLimit) : [];
-    this.selected = next;
-    this.updateDom({ speed: Math.max(0, Number(this.config.transitionSpeed) || 0) });
+    return [...shuffle(fresh), ...shuffle(older), ...shuffle(repeats)].slice(0, count);
   },
+
+  preloadPhoto(relativePath) {
+    const image = new Image();
+    const url = this.file(relativePath);
+    if (typeof image.decode === "function") {
+      image.src = url;
+      return image.decode().then(() => image);
+    }
+    return new Promise((resolve, reject) => {
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error("Unable to load " + relativePath));
+      image.src = url;
+    });
+  },
+
+  prepareNextPhotos() {
+    if (!this.initialized || this.preparing || this.prepared || !this.photos.length) return;
+    const next = this.choosePhotos();
+    if (!next.length) return;
+    this.preparing = true;
+
+    Promise.all(next.map(photo => this.preloadPhoto(photo)))
+      .then(images => {
+        this.preparing = false;
+        this.prepared = { photos: next, images };
+        // Updating hidden DOM is safe. On first load we must also populate
+        // an initially empty collage even if it is already visible.
+        if (this.suspended || this.selected.length === 0) this.applyPrepared();
+      })
+      .catch(error => {
+        this.preparing = false;
+        Log.warn("MMM-JudoCollage: image preload failed: " + error.message);
+        // Keep the existing collage, never replace it with broken images.
+      });
+  },
+
+  applyPrepared() {
+    if (!this.prepared) return;
+    const limit = Math.max(0, Math.trunc(Number(this.config.avoidRecentImages) || 0));
+    this.recent = limit ? [...this.recent, ...this.selected].slice(-limit) : [];
+    this.selected = this.prepared.photos;
+    // Hold references to decoded HTMLImageElements through display.
+    this.decodedImages = this.prepared.images;
+    this.prepared = null;
+    // No 800 ms DOM transition after the page has become visible.
+    this.updateDom({ speed: 0 });
+  },
+
   getDom() {
     const root = document.createElement("div");
     root.className = "judo-collage" + (this.config.grayscale ? " judo-collage--bw" : "");
