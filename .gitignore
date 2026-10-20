@@ -1,0 +1,5 @@
+# Local club photographs are not checked into Git
+photos/*
+!photos/.gitkeep
+node_modules/
+.DS_Store
