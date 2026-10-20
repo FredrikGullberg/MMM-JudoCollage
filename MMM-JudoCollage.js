@@ -51,7 +51,9 @@ Module.register("MMM-JudoCollage", {
 
   choosePhotos() {
     const all = this.photos;
-    const count = Math.min(3, all.length, Math.max(1, Math.trunc(Number(this.config.imageCount) || 3)));
+    const requested = Number(this.config.imageCount);
+    const limit = Number.isFinite(requested) ? Math.max(1, Math.min(12, Math.trunc(requested))) : 3;
+    const count = Math.min(limit, all.length);
     const current = new Set(this.selected);
     const fresh = all.filter(x => !current.has(x) && !this.recent.includes(x));
     const older = all.filter(x => !current.has(x) && this.recent.includes(x));
@@ -114,20 +116,56 @@ Module.register("MMM-JudoCollage", {
     this.updateDom({ speed: 0 });
   },
 
+  // Balanced row layouts use a 12-track grid, so every row fills the full
+  // screen width without empty cells. The classic three-photo layout is kept.
+  getLayoutRows(count) {
+    const layouts = {
+      1: [1],
+      2: [2],
+      3: [1, 2], // Special 60/40 split, handled separately below
+      4: [2, 2],
+      5: [3, 2],
+      6: [3, 3],
+      7: [4, 3],
+      8: [4, 4],
+      9: [3, 3, 3],
+      10: [4, 3, 3],
+      11: [4, 4, 3],
+      12: [4, 4, 4]
+    };
+    return layouts[count] || [];
+  },
+
   getDom() {
     const root = document.createElement("div");
-    root.className = "judo-collage" + (this.config.grayscale ? " judo-collage--bw" : "");
-    ["large", "top", "bottom"].forEach((slot, i) => {
-      const tile = document.createElement("div");
-      tile.className = "judo-collage__tile judo-collage__tile--" + slot;
-      if (this.selected[i]) {
-        const img = document.createElement("img");
-        img.src = this.file(this.selected[i]);
-        img.alt = "Judofoto";
-        tile.appendChild(img);
+    const count = this.selected.length;
+    const classic = count === 3;
+    root.className = "judo-collage" +
+      (this.config.grayscale ? " judo-collage--bw" : "") +
+      (classic ? " judo-collage--classic" : " judo-collage--grid");
+
+    const rows = this.getLayoutRows(count);
+    if (!classic) root.style.setProperty("--judo-rows", Math.max(1, rows.length));
+
+    let index = 0;
+    const slots = classic ? [1, 2, 3] : rows;
+    for (const columns of slots) {
+      for (let col = 0; col < (classic ? 1 : columns); col++) {
+        const tile = document.createElement("div");
+        const slotClass = classic ? ["large", "top", "bottom"][index] : null;
+        tile.className = "judo-collage__tile" +
+          (slotClass ? " judo-collage__tile--" + slotClass : "");
+        if (!classic) tile.style.gridColumn = "span " + (12 / columns);
+        if (this.selected[index]) {
+          const img = document.createElement("img");
+          img.src = this.file(this.selected[index]);
+          img.alt = "Judofoto";
+          tile.appendChild(img);
+        }
+        root.appendChild(tile);
+        index++;
       }
-      root.appendChild(tile);
-    });
+    }
     if (this.config.showBrandPanel) {
       const panel = document.createElement("div");
       panel.className = "judo-collage__brand";
