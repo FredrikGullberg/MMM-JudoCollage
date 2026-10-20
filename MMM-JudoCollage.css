@@ -32,7 +32,7 @@
   pointer-events: none;
 }
 .judo-collage__brand img { max-width: 49%; max-height: 100%; object-fit: contain; }
-.judo-collage__wordmark { max-width: 55%; color: #fff; text-align: center; font-family: Impact, "Arial Narrow", sans-serif; font-weight: 900; line-height: .97; }
-.judo-collage__wordmark span { display: block; font-size: clamp(14px, 2.5vw, 54px); }
-.judo-collage__wordmark strong { display: block; font-size: clamp(34px, 5.8vw, 112px); }
+.judo-collage__wordmark { max-width: 55%; color: #fff; text-align: center; font-family: "Machine BT", "Machine BT Regular", Impact, sans-serif; font-weight: normal; line-height: .97; }
+.judo-collage__wordmark span { display: block; font-family: "Machine BT", "Machine BT Regular", Impact, sans-serif; font-weight: normal; font-size: clamp(14px, 2.5vw, 54px); }
+.judo-collage__wordmark strong { display: block; font-family: "Princetown", "Princetown Regular", Impact, sans-serif; font-weight: normal; font-size: clamp(34px, 5.8vw, 112px); }
 .judo-collage__empty { position: absolute; top: 45%; left: 40%; padding: 16px; color: white; background: #111; }
