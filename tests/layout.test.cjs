@@ -94,3 +94,29 @@ test("responsive grid CSS provides 12 columns and adjustable rows", () => {
   assert.match(css, /grid-template-rows:\s*repeat\(var\(--judo-rows/);
   assert.match(css, /\.judo-collage__tile--large/);
 });
+
+test("initial rendering does not wait for Image.decode() at higher counts", () => {
+  for (const count of [3, 6, 9, 12]) {
+    const module = createInstance(count);
+    const updates = [];
+    module.initialized = false;
+    module.updateDom = options => updates.push(options);
+    module.socketNotificationReceived("JUDO_PHOTOS", { photos: module.photos });
+    assert.equal(module.selected.length, count);
+    assert.equal(updates.length, 1, "render immediately for count " + count);
+    assert.equal(updates[0].speed, 0);
+    const dom = module.getDom();
+    const tiles = dom.children.filter(child => child.className?.includes("judo-collage__tile"));
+    assert.equal(tiles.length, count, "all tiles must appear for count " + count);
+  }
+});
+
+test("CSS grid tracks explicitly set for 9 and 12 images", () => {
+  for (const count of [9, 12]) {
+    const module = createInstance(count);
+    module.selected = module.choosePhotos();
+    const dom = module.getDom();
+    assert.equal(dom.style.gridTemplateColumns, "repeat(12, minmax(0, 1fr))");
+    assert.equal(dom.style.gridTemplateRows, "repeat(3, minmax(0, 1fr))");
+  }
+});
