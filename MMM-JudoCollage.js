@@ -15,6 +15,7 @@ Module.register("MMM-JudoCollage", {
   selected: [],
   recent: [],
   decodedImages: [],
+  badPhotos: [],
   prepared: null,
   preparing: false,
   initialized: false,
@@ -31,7 +32,14 @@ Module.register("MMM-JudoCollage", {
     this.initialized = true;
     this.photos = Array.isArray(payload.photos) ? payload.photos : [];
     if (payload.error) Log.warn("MMM-JudoCollage: " + payload.error);
-    this.prepareNextPhotos();
+    if (!this.selected.length) {
+      // Never block the initial collage behind Promise.all(Image.decode()).
+      // One slow or corrupt photo must not leave the whole page black.
+      this.selected = this.choosePhotos();
+      this.updateDom({ speed: 0 });
+    } else if (this.suspended) {
+      this.prepareNextPhotos();
+    }
   },
 
   // MMM-pages calls suspend() only once the outgoing page is hidden.
@@ -50,7 +58,7 @@ Module.register("MMM-JudoCollage", {
   },
 
   choosePhotos() {
-    const all = this.photos;
+    const all = this.photos.filter(photo => !this.badPhotos.includes(photo));
     const requested = Number(this.config.imageCount);
     const limit = Number.isFinite(requested) ? Math.max(1, Math.min(12, Math.trunc(requested))) : 3;
     const count = Math.min(limit, all.length);
@@ -89,18 +97,42 @@ Module.register("MMM-JudoCollage", {
     if (!next.length) return;
     this.preparing = true;
 
-    Promise.all(next.map(photo => this.preloadPhoto(photo)))
-      .then(images => {
+    // Decode at most two images at once on a Raspberry Pi. Preloading
+    // twelve large photos simultaneously can exhaust renderer memory.
+    const loaded = new Array(next.length);
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < next.length) {
+        const index = cursor++;
+        try {
+          loaded[index] = await this.preloadPhoto(next[index]);
+        } catch (error) {
+          loaded[index] = null;
+          if (!this.badPhotos.includes(next[index])) this.badPhotos.push(next[index]);
+          Log.warn("MMM-JudoCollage: unable to preload " + next[index] + ": " + error.message);
+        }
+      }
+    };
+    Promise.all(Array.from({ length: Math.min(2, next.length) }, () => worker()))
+      .then(() => {
         this.preparing = false;
-        this.prepared = { photos: next, images };
-        // Updating hidden DOM is safe. On first load we must also populate
-        // an initially empty collage even if it is already visible.
-        if (this.suspended || this.selected.length === 0) this.applyPrepared();
+        const photos = [];
+        const images = [];
+        for (let i = 0; i < next.length; ++i) {
+          if (loaded[i]) {
+            photos.push(next[i]);
+            images.push(loaded[i]);
+          }
+        }
+        // A failed photo reduces this one collage instead of blacking out
+        // the entire page. Future selections avoid failed files.
+        if (!photos.length) return;
+        this.prepared = { photos, images };
+        if (this.suspended) this.applyPrepared();
       })
       .catch(error => {
         this.preparing = false;
-        Log.warn("MMM-JudoCollage: image preload failed: " + error.message);
-        // Keep the existing collage, never replace it with broken images.
+        Log.warn("MMM-JudoCollage: unexpected preload error: " + error.message);
       });
   },
 
@@ -145,7 +177,11 @@ Module.register("MMM-JudoCollage", {
       (classic ? " judo-collage--classic" : " judo-collage--grid");
 
     const rows = this.getLayoutRows(count);
-    if (!classic) root.style.setProperty("--judo-rows", Math.max(1, rows.length));
+    if (!classic) {
+      // Explicit tracks avoid Chromium/CSS variable parsing differences.
+      root.style.gridTemplateColumns = "repeat(12, minmax(0, 1fr))";
+      root.style.gridTemplateRows = "repeat(" + Math.max(1, rows.length) + ", minmax(0, 1fr))";
+    }
 
     let index = 0;
     const slots = classic ? [1, 2, 3] : rows;
@@ -157,8 +193,12 @@ Module.register("MMM-JudoCollage", {
           (slotClass ? " judo-collage__tile--" + slotClass : "");
         if (!classic) tile.style.gridColumn = "span " + (12 / columns);
         if (this.selected[index]) {
-          const img = document.createElement("img");
-          img.src = this.file(this.selected[index]);
+          // Reuse the already-decoded image instead of creating a second
+          // full-resolution image element for each photo.
+          const url = this.file(this.selected[index]);
+          const ready = this.decodedImages[index];
+          const img = ready && ready.src === url ? ready : document.createElement("img");
+          if (img.src !== url) img.src = url;
           img.alt = "Judofoto";
           tile.appendChild(img);
         }
